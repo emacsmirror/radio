@@ -57,12 +57,7 @@ The `:url' keyword is replaced with the URL of the radio station."
 (defvar radio--current-proc nil
   "Current media player process.")
 
-(defvar radio-line-mode--string nil
-  "The string (optionally) displayed in the mode line.")
-
-(put 'radio-line-mode--string 'risky-local-variable t)
-
-(defun radio-command--replace-url (url)
+(defun radio--replace-command-url (url)
   "Replace the station URL in `radio-command'."
   (mapcar
    (lambda (arg)
@@ -73,7 +68,8 @@ The `:url' keyword is replaced with the URL of the radio station."
   "Sentinel for the current media player process.
 
 EVENT is a string describing the type of event."
-  (radio-line-mode--set (format "[Station: <%s>]" (string-trim event))))
+  (radio-line-mode--set (format "[Station: <%s>]" (string-trim event)))
+  (radio-mode--revert-buffer))
 
 (defun radio--play (station)
   "Play radio station.
@@ -81,13 +77,14 @@ EVENT is a string describing the type of event."
 STATION must be a cons of the form (NAME . URL).  If a station is
 being played, it is stopped first."
   (radio-stop)
-  (let* ((cmd (radio-command--replace-url (cdr station)))
+  (let* ((cmd (radio--replace-command-url (cdr station)))
 	 (program (car cmd))
 	 (start-process-args `(,program nil ,program ,@(cdr cmd))))
     (setq radio--current-proc (apply #'start-process start-process-args))
     (set-process-sentinel radio--current-proc #'radio--current-proc-sentinel)
     (process-put radio--current-proc :radio-station station)
-    (radio-line-mode--set (format "[Station: %s]" (car station)))))
+    (radio-line-mode--set (format "[Station: %s]" (car station)))
+    (radio-mode--revert-buffer)))
 
 ;;;###autoload
 (defun radio (station-name)
@@ -112,22 +109,25 @@ effect."
   (when (process-live-p radio--current-proc)
     (delete-process radio--current-proc))
   (setq radio--current-proc nil)
-  (radio-line-mode--set ""))
+  (radio-line-mode--set "")
+  (radio-mode--revert-buffer))
 
-(defun radio-list-stations--play ()
-  "Play the selected radio station and refresh the station list."
+(defconst radio-mode--buffer-name "*Station List*"
+  "The name of the station list buffer.")
+
+(defun radio-mode--revert-buffer ()
+  "Refresh the station list buffer."
+  (when-let* ((buf (get-buffer radio-mode--buffer-name)))
+    (with-current-buffer buf
+      (tabulated-list-revert))))
+
+(defun radio-mode--play ()
+  "Play the selected radio station."
   (interactive)
   (when-let* ((station (tabulated-list-get-id)))
-    (radio--play station)
-    (tabulated-list-revert)))
+    (radio--play station)))
 
-(defun radio-list-stations--stop ()
-  "Stop playing current radio station and refresh the station list."
-  (interactive)
-  (radio-stop)
-  (tabulated-list-revert))
-
-(defun radio-list-stations--generate ()
+(defun radio-mode--generate ()
   "Generate the radio station list for `tabulated-list-mode'."
   (let ((current-station (and (process-live-p radio--current-proc)
 			      (process-get radio--current-proc :radio-station))))
@@ -142,8 +142,8 @@ effect."
 
 (defvar-keymap radio-mode-map
   :doc "Keymap used by `radio-mode'."
-  "RET" #'radio-list-stations--play
-  "s" #'radio-list-stations--stop)
+  "RET" #'radio-mode--play
+  "s" #'radio-stop)
 
 (define-derived-mode radio-mode tabulated-list-mode "Radio Stations"
   "Major mode for listing radio stations."
@@ -151,17 +151,22 @@ effect."
 			       ("Station" 30 t)
 			       ("URL" 0 t)])
   (setq tabulated-list-sort-key '("Station" . nil))
-  (setq tabulated-list-entries #'radio-list-stations--generate)
+  (setq tabulated-list-entries #'radio-mode--generate)
   (tabulated-list-init-header))
 
 ;;;###autoload
 (defun radio-list-stations ()
   "Display a list of all radio stations."
   (interactive)
-  (with-current-buffer (get-buffer-create "*Station List*")
+  (with-current-buffer (get-buffer-create radio-mode--buffer-name)
     (radio-mode)
     (tabulated-list-print)
     (pop-to-buffer-same-window (current-buffer))))
+
+(defvar radio-line-mode--string nil
+  "The string (optionally) displayed in the mode line.")
+
+(put 'radio-line-mode--string 'risky-local-variable t)
 
 (defun radio-line-mode--set (string)
   "Set mode line status to STRING and force update."
